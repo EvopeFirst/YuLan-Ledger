@@ -115,7 +115,7 @@ $('form').onsubmit=guard(async e=>{
  e.preventDefault();const kind=$('kind').value,account=$('account').value,date=$('day').value;
  const cat=['支出','收入'].includes(kind)?$('category').value.trim():'';
  if(['支出','收入'].includes(kind)&&!cat)throw Error('请选择或填写分类');
- const r={id:editing||crypto.randomUUID(),kind,account,date,amount:cents($('amt').value),cat,note:$('note').value,dest:kind==='转账'?$('dest').value:'',parent:parentId};
+ const r={...state.rows.find(x=>x.id===editing),id:editing||crypto.randomUUID(),kind,account,date,amount:cents($('amt').value),cat,note:$('note').value,dest:kind==='转账'?$('dest').value:'',parent:parentId};
  const keep=$('again').checked&&!parentId&&!editing;
  await save({...state,rows:editing?state.rows.map(x=>x.id===editing?r:x):[...state.rows,r]});
  $('editor').close();if(keep){openForm(kind,account,null,'',date);$('again').checked=true}
@@ -156,3 +156,4 @@ async function boot(){
  try{await navigator.serviceWorker.register('./sw.js');await navigator.serviceWorker.ready;$('offline').textContent='离线缓存已就绪'}catch{$('offline').textContent='离线缓存未就绪'}
 }
 boot().catch(e=>alert('账本启动失败：'+e.message));
+
