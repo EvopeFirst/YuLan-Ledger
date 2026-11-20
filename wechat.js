@@ -40,6 +40,7 @@ function wxOptions(pairs){
  node.replaceChildren(...pairs.map(([value,label])=>new Option(label,value)));
  return node;
 }
+const amountsInPreview=new WeakMap();
 function wxShow(records){
  const panel=$('wxRows');
  panel.replaceChildren();
@@ -53,7 +54,10 @@ function wxShow(records){
   if(seen.has(rec.wxKey)){duplicate++;continue}
   seen.add(rec.wxKey);
   const card=element('div','');card.className='row';
-  card.append(element('b',rec.date+' · '+rec.direction+' '+money(rec.amount)),element('small',[rec.type,rec.status,rec.note].join(' · ')));
+  const title=element('b',rec.date+' · '+rec.direction+' ');
+  const amount=element('span',money(rec.amount));
+  amountsInPreview.set(amount,rec.amount);amount.className='previewAmount';title.append(amount);
+  card.append(title,element('small',[rec.type,rec.status,rec.note].join(' · ')));
   panel.append(card);
   if(!rec.allowed){review++;card.append(element('small','跳过，请人工核对状态、退款或资金账户'));continue}
   const matches=state.rows.filter(r=>!r.wxKey&&r.date===rec.date&&r.amount===rec.amount&&wallet(r.account)===wallet(rec.account)&&(r.kind===rec.direction||(rec.direction==='支出'&&r.kind==='转账')||(rec.direction==='收入'&&recovery(r))));
@@ -63,7 +67,15 @@ function wxShow(records){
   const action=wxOptions(actions);
   const personal=/转账|群收款|红包/.test(rec.type);
   action.value=matches.length?'skip':rec.campus?'campus':personal?'skip':'new';
-  const category=document.createElement('input');category.value=rec.category||'其他';category.setAttribute('aria-label','新增流水的分类');
+  const category=document.createElement('select');
+  const list=categoriesFor(rec.direction);
+  const aliases={'餐饮':'饮食','餐饮美食':'饮食','文化休闲':'娱乐','交通出行':'车费'};
+  const suggested=list.includes(rec.category)?rec.category:aliases[rec.category];
+  options(category,list);
+  if(list.includes(suggested))category.value=suggested;
+  else if(rec.direction==='收入')category.value='其他';
+  else{category.insertBefore(new Option('请选择分类',''),category.firstChild);category.value=''}
+  category.setAttribute('aria-label','新增流水的分类');
   const sync=()=>category.hidden=action.value!=='new';action.onchange=sync;sync();
   card.append(element('small',rec.account+(matches.length?' · 疑似已有手记，请选择合并或新增':'')),action,category);
   choices.push({rec,action,category});
@@ -78,6 +90,7 @@ function wxShow(records){
    const op=action.value;
    if(op==='skip')continue;
    if(op==='new'||op==='campus'){
+    if(op==='new'&&!category.value)throw Error('请为 '+rec.date+' '+money(rec.amount)+' 的流水选择分类，或选暂不导入。');
     rows.push({id:crypto.randomUUID(),wxKey:rec.wxKey,date:rec.date,account:rec.account,kind:op==='campus'?'转账':rec.direction,dest:op==='campus'?'玉兰卡':'',cat:op==='campus'?'':category.value.trim()||'其他',note:rec.note,amount:rec.amount,parent:''});
     added++;
    }else{

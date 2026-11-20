@@ -3,9 +3,14 @@ const $ = id => document.getElementById(id);
 const names = ['微信零钱','支付宝余额','银行卡','玉兰卡'];
 const channels = ['微信零钱','支付宝余额','支付宝·银行卡','银行卡','玉兰卡'];
 const wallet = channel => channel === '支付宝·银行卡' ? '银行卡' : channel;
+const expenseCategories=['饮食','生活','转账','玉兰卡','AI','应用续费','娱乐','购物','日用百货','快递寄付','学习','车费','体育','学费'];
+const incomeCategories=['生活费','校园补贴','工资','其他'];
+function categoriesFor(kind){return kind==='收入'?incomeCategories:expenseCategories}
 const types = ['支出','收入','转账','分摊收回','退款'];
 const recovery = t => ['退款','分摊收回'].includes(t.kind);
-const money = cents => '¥' + (cents/100).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+let amountsVisible=false;
+const pinStorageKey='yulan-pocket-ledger.pin.v1';
+const money = cents => !amountsVisible?'••••':'¥' + (cents/100).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
 const iso = date => [date.getFullYear(),String(date.getMonth()+1).padStart(2,'0'),String(date.getDate()).padStart(2,'0')].join('-');
 const today = () => iso(new Date());
 function cents(value){
@@ -56,8 +61,8 @@ function bounds(){
  default:return [iso(new Date(y,m,1)),iso(new Date(y,m+1,0))];
  }
 }
-function page(id){document.querySelectorAll('main section').forEach(s=>s.hidden=s.id!==id);document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active',b.dataset.page===id));window.scrollTo(0,0)}
-function flows(test,label){predicate=test;$('filter').textContent=label;renderRows();page('flow')}
+function page(id){document.querySelectorAll('main section').forEach(s=>s.hidden=s.id!==id);document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active',b.dataset.page===(id==='incomeView'?'overview':id)));window.scrollTo(0,0)}
+function flows(test,label,fromIncome=false){$('incomeBack').hidden=!fromIncome;predicate=test;$('filter').textContent=label;renderRows();page('flow')}
 function renderRows(){
  const box=$('rows');box.replaceChildren();
  for(const r of state.rows.filter(predicate).reverse().sort((a,b)=>b.date.localeCompare(a.date))){
@@ -75,7 +80,9 @@ function renderRows(){
  if(!box.children.length)box.append(element('p','暂无流水'));
 }
 function render(){
+ $('clearRows').disabled=!state.rows.length;
  const [from,to]=bounds(), balances={...state.opening}, groups=new Map(),returns=new Map();
+ const byIncome=new Map();
  let income=0,expense=0;
  for(const r of state.rows){
   balances[wallet(r.account)]+=['支出','转账'].includes(r.kind)?-r.amount:r.amount;
@@ -83,39 +90,57 @@ function render(){
   if(recovery(r))returns.set(r.parent,(returns.get(r.parent)||0)+r.amount);
  }
  for(const r of state.rows.filter(x=>x.date>=from&&x.date<=to)){
-  if(r.kind==='收入')income+=r.amount;
+  if(r.kind==='收入'){
+   income+=r.amount;
+   byIncome.set(r.cat,(byIncome.get(r.cat)||0)+r.amount);
+  }
   if(r.kind==='支出'){const net=r.amount-(returns.get(r.id)||0);expense+=net;groups.set(r.cat,(groups.get(r.cat)||0)+net)}
  }
  $('total').textContent=money(expense);$('income').textContent=money(income);$('net').textContent=money(income-expense);
+ $('incomeDates').textContent=from+' 至 '+to;
+ $('incomeSum').textContent=money(income);
+ const incomeBox=$('incomeGroups');
+ incomeBox.replaceChildren();
+ for(const [cat,sum] of [...byIncome].sort((a,b)=>b[1]-a[1])){
+  const row=button((cat||'未分类')+'　'+money(sum),()=>flows(
+   r=>r.kind==='收入'&&r.cat===cat&&r.date>=from&&r.date<=to,
+   '个人收入 · '+(cat||'未分类')+' · '+from+' 至 '+to,true));
+  incomeBox.append(row);
+ }
+ if(!byIncome.size)incomeBox.textContent=from>to?'请检查起止日期':'这段时间没有收入记录';
  $('cats').replaceChildren();
  for(const [cat,sum] of [...groups].sort((a,b)=>b[1]-a[1])){
   const row=element('div','');row.className='row';row.append(button(cat+'　'+money(sum),()=>flows(r=>r.kind==='支出'&&r.cat===cat&&r.date>=from&&r.date<=to,cat+' · '+from+' 至 '+to)));
-  const bar=element('progress','');bar.max=expense||1;bar.value=sum;row.append(bar);$('cats').append(row);
+  const bar=element('progress','');bar.max=1;bar.value=expense?sum/expense:0;row.append(bar);$('cats').append(row);
  }
  if(!groups.size)$('cats').textContent=from>to?'开始日期应早于结束日期':'这段时间还没有支出';
  $('balances').replaceChildren();
  for(const n of names){
-  const line=element('div','');line.className='row';line.append(element('b',n+'　'+money(balances[n])),button('查看流水',()=>flows(r=>wallet(r.account)===n||r.dest===n,n)),button('期初余额',async()=>{const v=prompt(n+'期初余额（元），修改后将重新计算当前余额',String(state.opening[n]/100));if(v!==null)await save({...state,opening:{...state.opening,[n]:cents(v)}})}));$('balances').append(line);
+  const line=element('div','');line.className='row';line.append(element('b',n+'　'+money(balances[n])),button('查看流水',()=>flows(r=>wallet(r.account)===n||r.dest===n,n)),button('期初余额',async()=>{if(!amountsVisible){askPin(()=>editOpening(n));return}await editOpening(n)}));$('balances').append(line);
  }
  renderRows();
 }
+async function editOpening(n){const v=prompt(n+'期初余额（元），修改后将重新计算当前余额',String(state.opening[n]/100));if(v!==null)await save({...state,opening:{...state.opening,[n]:cents(v)}})}
 function fields(){
  const k=$('kind').value;$('destLabel').hidden=k!=='转账';$('catLabel').hidden=!['支出','收入'].includes(k);
- const list=k==='收入'?['生活费','校园补贴','工资','其他']:['餐饮','交通','学习','购物','住宿','娱乐','其他'];
- options($('choices'),list);$('category').value=list[0];
+ options($('category'),categoriesFor(k));
 }
 function openForm(kind='支出',account='微信零钱',r=null,parent='',date=today()){
  editing=r?.id||'';parentId=r?.parent||parent;$('form').reset();
  options($('kind'),parentId?types.slice(3):types.slice(0,3));$('kind').value=kind;fields();
- $('account').value=account;$('day').value=r?.date||date;$('amt').value=r?String(r.amount/100):'';$('dest').value=r?.dest||'玉兰卡';
- if(r){$('category').value=r.cat;$('note').value=r.note}
+ $('account').value=account;$('day').value=r?.date||date;const hiddenAmount=Boolean(r)&&!amountsVisible;
+ $('amt').disabled=hiddenAmount;
+ $('amt').placeholder=hiddenAmount?'••••':'';
+ $('editAmount').hidden=!hiddenAmount;
+ $('amt').value=r&&!hiddenAmount?String(r.amount/100):'';$('dest').value=r?.dest||'玉兰卡';
+ if(r){if(r.cat&&!categoriesFor(kind).includes(r.cat))$('category').add(new Option(r.cat,r.cat));$('category').value=r.cat;$('note').value=r.note}
  $('formTitle').textContent=editing?'编辑流水':'记一笔';$('editor').showModal();
 }
 $('form').onsubmit=guard(async e=>{
  e.preventDefault();const kind=$('kind').value,account=$('account').value,date=$('day').value;
  const cat=['支出','收入'].includes(kind)?$('category').value.trim():'';
  if(['支出','收入'].includes(kind)&&!cat)throw Error('请选择或填写分类');
- const r={...state.rows.find(x=>x.id===editing),id:editing||crypto.randomUUID(),kind,account,date,amount:cents($('amt').value),cat,note:$('note').value,dest:kind==='转账'?$('dest').value:'',parent:parentId};
+ const r={...state.rows.find(x=>x.id===editing),id:editing||crypto.randomUUID(),kind,account,date,amount:editing&&!amountsVisible?state.rows.find(x=>x.id===editing).amount:cents($('amt').value),cat,note:$('note').value,dest:kind==='转账'?$('dest').value:'',parent:parentId};
  const keep=$('again').checked&&!parentId&&!editing;
  await save({...state,rows:editing?state.rows.map(x=>x.id===editing?r:x):[...state.rows,r]});
  $('editor').close();if(keep){openForm(kind,account,null,'',date);$('again').checked=true}
@@ -123,6 +148,58 @@ $('form').onsubmit=guard(async e=>{
 $('kind').onchange=fields;$('cancel').onclick=()=>$('editor').close();
 function bytes64(data){return btoa(Array.from(new Uint8Array(data),n=>String.fromCharCode(n)).join(''))}
 function decode(s){return Uint8Array.from(atob(s),c=>c.charCodeAt(0))}
+let pinRequest=null;
+function askPin(afterUnlock){
+ const saved=localStorage.getItem(pinStorageKey);
+ pinRequest={saved,afterUnlock};
+ $('pinForm').reset();
+ $('pinTitle').textContent=saved?'查看金额':'设置四位数字 PIN';
+ $('confirmLabel').hidden=Boolean(saved);
+ $('pinConfirm').disabled=Boolean(saved);
+ $('pinConfirm').required=!saved;
+ $('pinSubmit').disabled=false;
+ $('pinError').textContent='';
+ $('pinDialog').showModal();
+ $('pin').focus();
+}
+async function pinVerifier(pin,salt){
+ const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(pin),'PBKDF2',false,['deriveBits']);
+ return bytes64(await crypto.subtle.deriveBits({name:'PBKDF2',salt,iterations:210000,hash:'SHA-256'},key,256));
+}
+$('showMoney').onclick=guard(()=>askPin());
+$('editAmount').onclick=guard(()=>askPin(()=>{
+ $('amt').disabled=false;
+ $('amt').placeholder='';
+ $('amt').value=String(state.rows.find(r=>r.id===editing).amount/100);
+ $('editAmount').hidden=true;
+ $('amt').focus();
+}));
+$('pinCancel').onclick=()=>$('pinDialog').close();
+$('pinDialog').onclose=()=>{$('pinForm').reset();pinRequest=null};
+$('pinForm').onsubmit=guard(async event=>{
+ event.preventDefault();
+ const request=pinRequest,pin=$('pin').value;
+ if(!request||$('pinSubmit').disabled)return;
+ if(!/^\d{4}$/.test(pin)||(!request.saved&&pin!==$('pinConfirm').value)){
+  $('pinError').textContent='请输入四位数字，并确认两次输入一致。';return;
+ }
+ $('pinSubmit').disabled=true;
+ try{
+  const saved=request.saved&&JSON.parse(request.saved);
+  const salt=saved?decode(saved.salt):crypto.getRandomValues(new Uint8Array(16));
+  const verifier=await pinVerifier(pin,salt);
+  if(pinRequest!==request||!$('pinDialog').open)return;
+  if(localStorage.getItem(pinStorageKey)!==request.saved)throw Error('PIN 设置已更新，请关闭后重试。');
+  if(saved&&saved.verifier!==verifier){$('pinError').textContent='PIN 不正确，请重试。';$('pin').select();return}
+  if(!saved)localStorage.setItem(pinStorageKey,JSON.stringify({salt:bytes64(salt),verifier}));
+  amountsVisible=true;
+  $('pinDialog').close();
+  $('showMoney').hidden=true;
+  render();
+  for(const node of document.querySelectorAll('.previewAmount'))node.textContent=money(amountsInPreview.get(node));
+  await request.afterUnlock?.();
+ }finally{$('pinSubmit').disabled=false}
+});
 async function key(salt){
  if($('password').value.length<8)throw Error('备份密码至少 8 位');
  const pw=await crypto.subtle.importKey('raw',new TextEncoder().encode($('password').value),'PBKDF2',false,['deriveKey']);
@@ -143,6 +220,16 @@ $('restore').onclick=guard(async()=>{
  for(const r of incoming.rows){bal[wallet(r.account)]+=['转账','支出'].includes(r.kind)?-r.amount:r.amount;if(r.kind==='转账')bal[r.dest]+=r.amount}
  if(confirm(['备份包含 '+dates.length+' 笔流水',dates.length?dates[0]+' 至 '+dates.at(-1):'空账本',...names.map(n=>n+' '+money(bal[n])),'确认覆盖当前账本？'].join('\n')))await save(incoming);
 });
+$('clearRows').onclick=guard(async()=>{
+ if(!state?.rows.length)return;
+ const phrase='清除全部流水';
+ const answer=prompt('将清除全部 '+state.rows.length+' 笔流水，包括手记、导入和关联回款。账户余额将回到期初余额。恢复需要此前导出的备份。请输入「'+phrase+'」确认。','');
+ if(answer!==phrase)return;
+ await save({...state,rows:[]});
+ $('wxRows').replaceChildren();
+ $('wxFile').value='';
+ alert('已清除全部流水。');
+});
 async function boot(){
  const q=indexedDB.open('yulan-pocket-ledger',1);q.onupgradeneeded=()=>q.result.createObjectStore('book');
  db=await new Promise((res,rej)=>{q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error)});await read();validate(state);
@@ -150,8 +237,11 @@ async function boot(){
  $('start').value=bounds()[0];$('end').value=today();
  for(const id of ['period','start','end'])$(id).onchange=()=>{$('range').hidden=$('period').value!=='自选日期';render()};
  document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>b.dataset.page==='flow'?flows(()=>true,'全部流水'):page(b.dataset.page));
+ $('openIncome').onclick=$('incomeBack').onclick=()=>page('incomeView');
+ $('incomeHome').onclick=()=>page('overview');
  $('all').onclick=()=>flows(()=>true,'全部流水');$('add').onclick=()=>openForm();
- for(const [label,k,a,c] of [['微信充值','转账','微信零钱',''],['收到补贴','收入','玉兰卡','校园补贴'],['食堂消费','支出','玉兰卡','餐饮']])$('shortcuts').append(button(label,()=>{openForm(k,a);if(c)$('category').value=c}));
+ for(const [label,k,a,c] of [['微信充值','转账','微信零钱',''],['收到补贴','收入','玉兰卡','校园补贴'],['食堂消费','支出','玉兰卡','饮食']])$('shortcuts').append(button(label,()=>{openForm(k,a);if(c)$('category').value=c}));
+ $('showMoney').disabled=false;
  render();page('overview');
  try{await navigator.serviceWorker.register('./sw.js');await navigator.serviceWorker.ready;$('offline').textContent='离线缓存已就绪'}catch{$('offline').textContent='离线缓存未就绪'}
 }
