@@ -1,1 +1,31 @@
-{"name":"玉兰小账","short_name":"玉兰小账","lang":"zh-CN","id":"./","start_url":"./","scope":"./","display":"standalone","theme_color":"#165744","background_color":"#f6f8f5","icons":[{"src":"icon.svg","sizes":"any","type":"image/svg+xml"}]}
+{
+  "name": "玉兰小账",
+  "short_name": "玉兰小账",
+  "lang": "zh-CN",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "theme_color": "#165744",
+  "background_color": "#f6f8f5",
+  "icons": [
+    {
+      "type": "image/png",
+      "purpose": "any",
+      "sizes": "192x192",
+      "src": "yulan-192.png"
+    },
+    {
+      "type": "image/png",
+      "purpose": "any",
+      "sizes": "512x512",
+      "src": "yulan-512.png"
+    },
+    {
+      "type": "image/png",
+      "purpose": "maskable",
+      "sizes": "512x512",
+      "src": "yulan-512.png"
+    }
+  ]
+}
